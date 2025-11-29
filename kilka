@@ -1,0 +1,215 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+
+local playerWhitelist = {}
+local ATTACK_DELAY = 0.05
+_G.AutoFastPunch = true
+local AUTO_HOP_DELAY = 50
+local placeId = game.PlaceId
+
+local function getHands()
+    local char = LocalPlayer.Character
+    if not char then return nil, nil end
+    local right = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm")
+    local left  = char:FindFirstChild("LeftHand")  or char:FindFirstChild("Left Arm")
+    return left, right
+end
+
+task.spawn(function()
+    while _G.AutoFastPunch do
+        local punch = LocalPlayer.Backpack and LocalPlayer.Backpack:FindFirstChild("Punch")
+        if punch and LocalPlayer.Character then
+            punch.Parent = LocalPlayer.Character
+            if punch:FindFirstChild("attackTime") then
+                punch.attackTime.Value = 0
+            end
+        end
+        task.wait(0.1)
+    end
+    local ch = LocalPlayer.Character
+    if ch then
+        local p = ch:FindFirstChild("Punch")
+        if p then p.Parent = LocalPlayer.Backpack end
+    end
+end)
+
+task.spawn(function()
+    while _G.AutoFastPunch do
+        if LocalPlayer:FindFirstChild("muscleEvent") then
+            pcall(function()
+                LocalPlayer.muscleEvent:FireServer("punch", "rightHand")
+                LocalPlayer.muscleEvent:FireServer("punch", "leftHand")
+            end)
+        end
+        local ch = LocalPlayer.Character
+        if ch then
+            local p = ch:FindFirstChild("Punch")
+            if p then
+                pcall(function() p:Activate() end)
+            end
+        end
+        task.wait(0.05)
+    end
+end)
+
+task.spawn(function()
+    while _G.AutoFastPunch do
+        local leftHand, rightHand = getHands()
+        if leftHand and rightHand and LocalPlayer.Character then
+            for _, target in ipairs(Players:GetPlayers()) do
+                if target ~= LocalPlayer and not playerWhitelist[target.Name] then
+                    local tchar = target.Character
+                    if tchar then
+                        local humanoid = tchar:FindFirstChildOfClass("Humanoid")
+                        local rootPart = tchar:FindFirstChild("HumanoidRootPart")
+                        if humanoid and rootPart and humanoid.Health > 0 then
+                            pcall(function()
+                                firetouchinterest(rightHand, rootPart, 1)
+                                firetouchinterest(leftHand, rootPart, 1)
+                                firetouchinterest(rightHand, rootPart, 0)
+                                firetouchinterest(leftHand, rootPart, 0)
+                            end)
+                        end
+                    end
+                end
+            end
+        end
+        task.wait(ATTACK_DELAY)
+    end
+end)
+
+local function find16PlayerServer()
+    local cursor = nil
+    repeat
+        local url = "https://games.roblox.com/v1/games/"..placeId.."/servers/Public?sortOrder=Desc&limit=100"
+        if cursor then
+            url = url.."&cursor="..cursor
+        end
+        local success, response = pcall(function()
+            return HttpService:JSONDecode(game:HttpGet(url))
+        end)
+        if success and response and response.data then
+            for _, server in ipairs(response.data) do
+                if server.playing == 16 and server.maxPlayers == 20 and server.id ~= game.JobId then
+                    return server.id
+                end
+            end
+            cursor = response.nextPageCursor
+        else
+            break
+        end
+    until not cursor
+    return nil
+end
+
+local function hopToServer()
+    task.spawn(function()
+        while true do
+            local serverId = find16PlayerServer()
+            if serverId then
+                local success = pcall(function()
+                    TeleportService:TeleportToPlaceInstance(placeId, serverId, LocalPlayer)
+                end)
+                if success then break end
+            end
+            task.wait(1)
+        end
+    end)
+end
+
+local function setupDiedListener(character)
+    local hum = character:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.Died:Connect(hopToServer)
+    else
+        character.ChildAdded:Connect(function(child)
+            if child:IsA("Humanoid") then
+                child.Died:Connect(hopToServer)
+            end
+        end)
+    end
+end
+
+if LocalPlayer.Character then
+    setupDiedListener(LocalPlayer.Character)
+end
+
+LocalPlayer.CharacterAdded:Connect(setupDiedListener)
+
+task.spawn(function()
+    while true do
+        task.wait(AUTO_HOP_DELAY)
+        hopToServer()
+    end
+end)
+
+local function lockPosition(char)
+    local hrp = char:WaitForChild("HumanoidRootPart")
+    RunService.Heartbeat:Connect(function()
+        if hrp and hrp.Parent then
+            hrp.CFrame = CFrame.new(coords)
+        end
+    end)
+end
+
+if LocalPlayer.Character then
+    lockPosition(LocalPlayer.Character)
+end
+
+LocalPlayer.CharacterAdded:Connect(lockPosition)
+
+local player = game:GetService("Players").LocalPlayer
+
+local comboActive = false
+local eggLoop, characterAddedConn
+
+local function ensureEggEquipped()
+    if not comboActive or not player.Character then return end
+    
+    local eggsInHand = 0
+    for _, item in ipairs(player.Character:GetChildren()) do
+        if item.Name == "Protein Egg" then
+            eggsInHand += 1
+            if eggsInHand > 1 then
+                item.Parent = player.Backpack
+            end
+        end
+    end
+    
+    if eggsInHand == 0 then
+        local egg = player.Backpack:FindFirstChild("Protein Egg")
+        if egg then
+            egg.Parent = player.Character
+        end
+    end
+end
+
+local comboSwitch = KillingTab:AddSwitch("NaN (Egg+NaN+Punch Combo)", function(bool)
+    comboActive = bool
+    
+    if bool then
+        changeSpeedSizeRemote:InvokeServer("changeSize", 0/0)
+        
+        eggLoop = task.spawn(function()
+            while comboActive do
+                ensureEggEquipped()
+                task.wait(0.2)
+            end
+        end)
+        
+        characterAddedConn = player.CharacterAdded:Connect(function(newChar)
+            task.wait(0.5)
+            ensureEggEquipped()
+        end)
+        
+        ensureEggEquipped()
+        
+    else
+        if eggLoop then task.cancel(eggLoop) end
+        if characterAddedConn then characterAddedConn:Disconnect() end
+    end
+end)
+
+comboSwitch:Set(false)
